@@ -4,3 +4,12 @@ pytz
 
 # tools
 django-click
+
+# REST
+requests
+
+# Crypto
+cryptography
+
+# AWS
+boto
