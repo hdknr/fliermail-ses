@@ -20,7 +20,6 @@ components
 docs/build
 logs
 archives
-migrations
 node_modules
 app/local_settings.py
 
