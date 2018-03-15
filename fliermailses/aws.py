@@ -1,6 +1,6 @@
 import json
 import requests
-from boto import ses, sns
+import boto3
 from base64 import standard_b64decode
 from .crypto import verify_signature
 from logging import getLogger
@@ -21,14 +21,27 @@ NOTIFICATION_SIGNING_INPUT_KEY = [
     "Type",
 ]
 
+def connect_ses(aws_access_key_id, aws_secret_access_key, region_name):
+    return boto3.client('ses',
+        region_name=region_name,
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key)
+
+
+def connect_sns(access_key_id, secret_access_key, region_name):
+    return boto3.client('sns',
+        region_name=region_name,
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key)
+
 
 def get_ses_regions(name=None):
-    res = ses.regions()
+    res = boto3.session.Session().get_available_regions('ses')
     return name and [ri for ri in res if ri.name == name] or res
 
 
 def get_sns_regions(name=None):
-    res = sns.regions()
+    res = boto3.session.Session().get_available_regions('sns')
     return name and [ri for ri in res if ri.name == name] or res
 
 
@@ -59,7 +72,7 @@ def create_ses_notification(
 class BaseMessage(object):
 
     def __init__(self, data):
-        if isinstance(data, basestring):
+        if isinstance(data, str):
             self.data = json.loads(data)
         elif isinstance(data, dict):
             self.data = data

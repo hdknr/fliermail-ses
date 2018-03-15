@@ -1,10 +1,8 @@
 from django.core.mail.backends import base
-from .aws import SendRawEmailResponse
-from .signals import BackendSignal
+from django.utils.functional import cached_property
 
-from django.core.mail.backends import base
-from flier.backends import BackendSignal
-from flier.ses.aws import SendRawEmailResponse
+from .signals import BackendSignal
+from .aws import SendRawEmailResponse
 
 
 class SesBackend(base.BaseEmailBackend, BackendSignal):
@@ -12,51 +10,45 @@ class SesBackend(base.BaseEmailBackend, BackendSignal):
     def __init__(self, fail_silently=False, **kwargs):
         self.fail_silently = fail_silently
 
-        # boto connection
-        self.connection = kwargs.get('connection', None)
+        # SES source
+        self.source = kwargs.get('source', None)
 
     def send_messages(self, email_messages):
         '''Django API for Email Backend
         '''
         num = 0
         for msg in email_messages:
-            self._send(msg)
-            num = num + 1
+            if self._send(msg):
+                num = num + 1
         return num
 
     def _send(self, message):
-        '''
-        - http://bit.ly/flier_ses_sendrawemail
-        '''
         from .models import Source
         sender = message.from_email
-        if not self.connection:
-            self.connection = Source.objects.filter(
-                address=sender).first().connection
-
+        if not self.source:
+            self.source = Source.objects.filter(address=sender).first()
         recipients = message.recipients()
-        for to in recipients:
-            self._send_single(message,  sender, to)
+        return self._send_ses(message,  sender, recipients)
 
-        return True
-
-    def _send_single(self, message, sender, destinations):
+    def _send_ses(self, message, sender, destinations):
         try:
-            message_id = message.extra_headers.get('Message-ID')
-            res = self.connection.send_raw_email(
+            res = self.source.send_raw_email(
                 raw_message=message.message().as_string(),
-                source=sender, destinations=destinations,)
+                destinations=destinations)
 
-            res = SendRawEmailResponse(res['SendRawEmailResponse'])
-
+            res = SendRawEmailResponse(res)
+            message_id = message.extra_headers.get('Message-ID', None)
             self.sent_signal.send(
                 sender=self.__class__,
                 from_email=sender, to=destinations, message_id=message_id,
                 key=res.SendRawEmailResult.MessageId,
                 status_code='SendRawEmailResponse', message=res.format())
+            return True
+
         except Exception as ex:
             self.failed_signal.send(
                 sender=self.__class__,
                 from_email=sender, to=destinations, message_id=message_id,
                 key=message_id,             # no key given
-                status=ex.__class__.__name__, message=ex.message)
+                status=ex.__class__.__name__, message=str(ex))
+            return False
