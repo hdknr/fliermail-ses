@@ -102,7 +102,7 @@ class Source(object):
         kwargs.pop('from_email', None)
         kwargs.pop('connection', None)
         headers = kwargs.pop('headers', {})
-        headers['From'] = self.sender
+        headers['From'] = headers.get('From', None) or self.sender
         return EmailMultiAlternatives(
             from_email=self.address,            # Only Verified Address
             connection=self.backend,            # IMPORTANT: SesBackend
@@ -130,6 +130,13 @@ class Source(object):
             RawMessage={'Data': raw_message.encode()},
             Destinations=destinations,
         )
+
+    def send_message(self, message):
+        '''django.core.mail.message.EmailMultiAlternatives, '''
+        destinations = message.recipients()
+        return self.send_raw_email(
+            raw_message=message.message().as_string(),
+            destinations=destinations)
 
     def cert(self, url):
         return self.service.cert(url)

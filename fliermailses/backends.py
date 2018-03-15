@@ -1,6 +1,6 @@
 from django.core.mail.backends import base
 from django.utils.functional import cached_property
-
+from email.utils import parseaddr
 from .signals import BackendSignal
 from .aws import SendRawEmailResponse
 
@@ -8,10 +8,8 @@ from .aws import SendRawEmailResponse
 class SesBackend(base.BaseEmailBackend, BackendSignal):
 
     def __init__(self, fail_silently=False, **kwargs):
-        self.fail_silently = fail_silently
-
-        # SES source
-        self.source = kwargs.get('source', None)
+        self.source = kwargs.pop('source', None)    # SES source
+        super(SesBackend, self).__init__(fail_silently=False, **kwargs)
 
     def send_messages(self, email_messages):
         '''Django API for Email Backend
@@ -22,33 +20,39 @@ class SesBackend(base.BaseEmailBackend, BackendSignal):
                 num = num + 1
         return num
 
-    def _send(self, message):
+    def _resolve_sender(self, sender):
         from .models import Source
-        sender = message.from_email
-        if not self.source:
-            self.source = Source.objects.filter(address=sender).first()
-        recipients = message.recipients()
-        return self._send_ses(message,  sender, recipients)
+        label, address = parseaddr(sender)
+        self.source = Source.objects.filter(address=address).first()
 
-    def _send_ses(self, message, sender, destinations):
+    def _send(self, message):
         try:
-            res = self.source.send_raw_email(
-                raw_message=message.message().as_string(),
-                destinations=destinations)
-
-            res = SendRawEmailResponse(res)
-            message_id = message.extra_headers.get('Message-ID', None)
-            self.sent_signal.send(
-                sender=self.__class__,
-                from_email=sender, to=destinations, message_id=message_id,
-                key=res.SendRawEmailResult.MessageId,
-                status_code='SendRawEmailResponse', message=res.format())
+            if not self.source:
+                self._resolve_sender(message.from_email)
+            res = self.source.send_message(message)
+            self.signal_success(message, res)
             return True
-
         except Exception as ex:
-            self.failed_signal.send(
-                sender=self.__class__,
-                from_email=sender, to=destinations, message_id=message_id,
-                key=message_id,             # no key given
-                status=ex.__class__.__name__, message=str(ex))
+            self.signal_failure(message, ex)
             return False
+
+    def signal_success(self, message, res):
+        res = SendRawEmailResponse(res)
+        self.sent_signal.send(
+            sender=self.__class__,
+            from_email=message.from_email,
+            to=message.recipients(),
+            message_id=message.message().get('Message-ID', None),
+            key=res.SendRawEmailResult.MessageId,
+            status_code='SendRawEmailResponse',
+            message=res.format())
+
+    def signal_failure(self, message, ex):
+        message_id = message.message().get('Message-ID', None)
+        self.failed_signal.send(
+            sender=self.__class__,
+            from_email=message.from_email,
+            to=message.recipients(),
+            message_id=message_id,
+            key=message_id,             # no key given
+            status=ex.__class__.__name__, message=str(ex))
